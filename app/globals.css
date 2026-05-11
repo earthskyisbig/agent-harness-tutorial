@@ -1,0 +1,15 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html { font-family: 'Apple SD Gothic Neo', 'Malgun Gothic', Pretendard, sans-serif; }
+
+  :root {
+    --color-wood:  #4CAF50;
+    --color-fire:  #F44336;
+    --color-earth: #FF9800;
+    --color-metal: #9E9E9E;
+    --color-water: #2196F3;
+  }
+}

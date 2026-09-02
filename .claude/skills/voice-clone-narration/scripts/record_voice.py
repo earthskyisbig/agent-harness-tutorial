@@ -99,7 +99,7 @@ def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--seconds", type=float, default=30, help="recording length (default 30)")
     ap.add_argument("--out", type=Path, default=HOME / "recordings" / "reference.wav")
-    ap.add_argument("--script", default="ko", help="reference script to display: ko | en | none")
+    ap.add_argument("--script", default="ko", help="reference script to display: ko | ko_casual | en | none")
     ap.add_argument("--device", default=None, help="sounddevice input device index/name (see --list-devices)")
     ap.add_argument("--list-devices", action="store_true")
     ap.add_argument("--countdown", type=int, default=3)

@@ -66,7 +66,7 @@ def main() -> None:
     ap.add_argument("--name", default="me", help="profile name (default: me)")
     ap.add_argument("--language", default="korean", help="language the reference was spoken in (korean/english/...)")
     src = ap.add_argument_group("transcript of the reference (pick one)")
-    src.add_argument("--script", default=None, help="bundled script id that was read aloud: ko | en")
+    src.add_argument("--script", default=None, help="bundled script id that was read aloud: ko | ko_casual | en")
     src.add_argument("--text", default=None, help="exact transcript as a string")
     src.add_argument("--text-file", default=None, help="file containing the transcript")
     src.add_argument("--transcribe", action="store_true", help="auto-transcribe with faster-whisper")

@@ -81,6 +81,15 @@ Tips to relay to the user: quiet room, 20-40 cm from the mic, no music,
 normal narration pace and tone (the clone copies the *style* of the
 reference too — a flat reading yields flat narration).
 
+Because the style is copied, match the reference to the job. `ko` / `en`
+are formal narration scripts (존댓말, documentary tone): right for
+explainers, tutorials, audiobooks. `ko_casual` is an intimate 반말 script
+for personal messages to family or friends. When the user wants a warm,
+conversational result and the only profile was recorded in narration tone,
+suggest recording `--script ko_casual` into a second profile
+(`--name me-casual`) rather than fighting the mismatch with sampling
+settings.
+
 ### 2. Build the voice profile
 
 ```bash
@@ -140,6 +149,7 @@ it in, especially for markdown or code-heavy sources:
 |---|---|---|
 | Doesn't sound like the user | noisy / quiet / clipped reference, or transcript mismatch | re-record, make sure `--script`/`--text` matches what was read, `--force` |
 | Right voice, robotic prosody | x-vector-only mode (no transcript) | rebuild the profile with a transcript |
+| Right voice, wrong mood (stiff for a personal message, too chatty for a tutorial) | reference tone doesn't match the text; 0.6B also flattens prosody | record a second profile with a matching script (`ko_casual` vs `ko`), use `--model 1.7B`, `--temperature 0.7` |
 | Wrong language accent | `--language` left on the reference language | pass `--language` matching the *text* |
 | Skips or repeats words | chunk too long or hallucination on odd tokens | lower `--max-chars` to ~120, clean the text, try another `--seed` |
 | Slow | CPU inference or 1.7B on small GPU | `--model 0.6B`; on GPU raise `--batch-size`. On CPU keep it at 1: a batch runs until its slowest member stops |

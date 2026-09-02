@@ -21,7 +21,7 @@ import numpy as np
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from tts_common import (  # noqa: E402
     DEFAULT_MODEL_SIZE, OUTPUT_DIR, die, join_with_gaps, list_profiles, load_model, load_profile, log,
-    maybe_encode_mp3, normalise_language, save_wav, split_into_chunks,
+    maybe_encode_mp3, normalise_language, save_wav, split_into_chunks, trim_edges,
 )
 
 
@@ -61,7 +61,9 @@ def main() -> None:
     ap.add_argument("--max-chars", type=int, default=180, help="max characters per synthesis chunk")
     ap.add_argument("--gap", type=float, default=0.35, help="pause between sentences (s)")
     ap.add_argument("--paragraph-gap", type=float, default=0.8, help="pause between paragraphs (s)")
-    ap.add_argument("--batch-size", type=int, default=4, help="chunks synthesised per model call")
+    ap.add_argument("--batch-size", type=int, default=1,
+                    help="chunks per model call. Keep 1 on CPU (a batch waits for its slowest member); 4-8 on a GPU")
+    ap.add_argument("--no-trim", action="store_true", help="keep the silence the model pads around each chunk")
     ap.add_argument("--temperature", type=float, default=None)
     ap.add_argument("--top-p", type=float, default=None)
     ap.add_argument("--seed", type=int, default=None, help="fix the sampling seed for repeatable output")
@@ -118,7 +120,10 @@ def main() -> None:
         got = sum(len(w) for w in wavs) / sr
         log(f"  -> {got:.1f}s audio in {time.time() - t_chunk:.0f}s")
         for wav, (_, para_break) in zip(wavs, batch):
-            pieces.append((np.asarray(wav, dtype=np.float32), args.paragraph_gap if para_break else args.gap))
+            wav = np.asarray(wav, dtype=np.float32)
+            if not args.no_trim:
+                wav = trim_edges(wav, sr)
+            pieces.append((wav, args.paragraph_gap if para_break else args.gap))
     # no trailing silence after the last piece
     if pieces:
         pieces[-1] = (pieces[-1][0], 0.0)

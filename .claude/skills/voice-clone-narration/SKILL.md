@@ -50,8 +50,9 @@ The script picks CUDA torch if `nvidia-smi` exists, CPU-only torch on Linux
 without a GPU, and the default wheel on macOS (Apple Silicon uses MPS). Model
 weights (0.6B ≈ 2.5 GB, 1.7B ≈ 4.5 GB) download from Hugging Face on first
 use. No GPU: use `--model 0.6B` everywhere and warn the user that synthesis
-is several times slower than real time. See
-`references/troubleshooting.md` for install failures.
+is a few times slower than real time (measured: 10 s of Korean audio in
+about 35 s on a 4-core CPU). See `references/troubleshooting.md` for
+install failures.
 
 ### 1. Record the reference (30 s)
 
@@ -101,9 +102,10 @@ Key flags: `--language` (default: profile language; `auto` lets the model
 detect — set it explicitly when the text language differs from the
 reference, e.g. Korean reference reading English text), `--model 0.6B|1.7B`
 (1.7B sounds better; 0.6B for CPU / low VRAM), `--gap` / `--paragraph-gap`
-(pauses in seconds), `--max-chars` (chunk size), `--seed` (reproducible
-output), `--dry-run` (show the chunk plan without loading the model),
-`--list-profiles`.
+(pauses in seconds; the model's own padding silence is trimmed so these
+are exact), `--max-chars` (chunk size), `--seed` (reproducible output),
+`--batch-size` (leave at 1 on CPU, raise to 4-8 on a GPU), `--dry-run`
+(show the chunk plan without loading the model), `--list-profiles`.
 
 Output defaults to `~/.voice-clone/outputs/<profile>-<timestamp>.wav`.
 Tell the user the path when done.
@@ -132,7 +134,8 @@ it in, especially for markdown or code-heavy sources:
 | Right voice, robotic prosody | x-vector-only mode (no transcript) | rebuild the profile with a transcript |
 | Wrong language accent | `--language` left on the reference language | pass `--language` matching the *text* |
 | Skips or repeats words | chunk too long or hallucination on odd tokens | lower `--max-chars` to ~120, clean the text, try another `--seed` |
-| Slow | CPU inference or 1.7B on small GPU | `--model 0.6B`, bigger `--batch-size` on GPU |
+| Slow | CPU inference or 1.7B on small GPU | `--model 0.6B`; on GPU raise `--batch-size`. On CPU keep it at 1: a batch runs until its slowest member stops |
+| Uneven pauses | trimming disabled or long chunks | default trimming handles it; otherwise tune `--gap` / `--paragraph-gap` |
 
 More detail: `references/qwen3-tts-api.md` (model API, languages,
 generation kwargs) and `references/troubleshooting.md` (install/runtime

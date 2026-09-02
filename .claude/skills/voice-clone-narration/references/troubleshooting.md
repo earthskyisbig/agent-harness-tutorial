@@ -28,7 +28,8 @@
 | `Unsupported languages: [...]` | use one of the names listed in `references/qwen3-tts-api.md`; aliases `ko/en/ja/zh` are accepted by the skill scripts |
 | CUDA OOM on 1.7B | `--model 0.6B`, `--batch-size 1`, or `--dtype float16` |
 | MPS errors on macOS | `--device cpu` (slower but reliable), or `--dtype float32` |
-| Very slow on CPU | expected: ~5-15× slower than real time with 0.6B. Narrate short pieces, or run on a GPU box / Colab and copy the profile folder over (it is just files) |
+| Very slow on CPU | expected: roughly 3-5× slower than real time with 0.6B on 4 cores. Keep `--batch-size 1` (a batched call on CPU can stall for many minutes), narrate short pieces, or run on a GPU box / Colab and copy the profile folder over (it is just files) |
+| Console prints "SoX could not be found" on import | harmless warning from the `sox` python package; the 12 Hz models never call the binary. Install sox to silence it |
 | Output has long silence at the end of a chunk | lower `--max-chars`, or trim with `--gap 0.2` |
 | Audio sounds fine in sample.wav but narration drifts after minutes | that is per-chunk sampling variance; set `--seed`, lower `--temperature 0.7` |
 

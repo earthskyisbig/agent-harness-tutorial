@@ -355,6 +355,21 @@ def split_into_chunks(text: str, max_chars: int = 180) -> List[Tuple[str, bool]]
     return chunks
 
 
+def trim_edges(wav: np.ndarray, sr: int, keep_s: float = 0.08, top_db: float = 40.0) -> np.ndarray:
+    """Cut the silence the model pads around each chunk, keeping `keep_s` of headroom.
+
+    Generated chunks typically carry 0.3-1.5 s of silence on both ends. Left
+    in place it makes pauses between sentences uneven; trimming lets --gap
+    and --paragraph-gap set the pacing deterministically.
+    """
+    import librosa
+    if len(wav) < sr * 0.2:
+        return wav
+    _, (start, end) = librosa.effects.trim(wav, top_db=top_db)
+    keep = int(sr * keep_s)
+    return wav[max(0, start - keep): min(len(wav), end + keep)]
+
+
 def join_with_gaps(pieces: Iterable[Tuple[np.ndarray, float]], sr: int) -> np.ndarray:
     """Concatenate wav pieces, inserting `gap_s` seconds of silence after each."""
     out: List[np.ndarray] = []

@@ -64,10 +64,18 @@ It prints the script from `assets/reference_scripts/<lang>.txt`, counts
 down, records from the default mic at 24 kHz mono, saves
 `~/.voice-clone/recordings/reference.wav`, and reports duration / peak /
 clipping / silence. Ask the user to re-record when it warns (clipping, very
-quiet, >60 % silence). Recording needs a real microphone: if Claude is
-running on a remote machine or the user prefers their phone, tell them to
-record themselves reading the script (any format, m4a is fine) and skip to
-step 2 with `--audio <their file>`.
+quiet, >60 % silence).
+
+Recording needs a real microphone on the machine running the script. When
+Claude runs remotely (Claude Code on the web, a cloud container, an SSH
+box) the user's mic is unreachable, so hand the recording step to them:
+show the script from `assets/reference_scripts/<lang>.txt`, have them
+record ~30 s with what they already have — macOS Voice Memos (음성 메모) or
+QuickTime Player → New Audio Recording, a phone voice-memo app, any format
+including m4a — and get the file back through whatever channel exists
+(a connected drive, a URL, a commit, a file drop). Then skip to step 2 with
+`--audio <their file>`. On a Mac without sounddevice/ffmpeg the recorder
+opens Voice Memos and prints these same steps by itself.
 
 Tips to relay to the user: quiet room, 20-40 cm from the mic, no music,
 normal narration pace and tone (the clone copies the *style* of the

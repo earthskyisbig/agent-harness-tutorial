@@ -80,8 +80,19 @@ def record_cli(seconds: float, sr: int, out: Path) -> None:
     if sox:
         subprocess.run([sox, "-d", "-r", str(sr), "-c", "1", str(out), "trim", "0", str(seconds)], check=True)
         return
+    if sys.platform == "darwin":
+        # No CLI recorder, but every Mac ships Voice Memos: open it and hand over.
+        subprocess.run(["open", "-a", "Voice Memos"], check=False)
+        print(
+            "\nNo command-line recorder found, so Voice Memos (음성 메모) was opened instead.\n"
+            "  1. Press the red button, read the script above (~30 s), press stop.\n"
+            "  2. Drag the new recording from the list onto your Desktop (it becomes a .m4a).\n"
+            "  3. Run:  python scripts/create_profile.py --audio ~/Desktop/<name>.m4a --script ko\n"
+            "  (To record from here next time: pip install sounddevice, or brew install ffmpeg.)"
+        )
+        sys.exit(2)
     die("no recorder available. `pip install sounddevice` (needs PortAudio) or install ffmpeg / sox, "
-        "or record on your phone and pass the file to create_profile.py --audio instead.")
+        "or record on your phone / Mac Voice Memos and pass the file to create_profile.py --audio instead.")
 
 
 def main() -> None:

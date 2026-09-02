@@ -25,6 +25,18 @@ from tts_common import (  # noqa: E402
 )
 
 
+def token_budget(n_chars: int) -> int:
+    """Upper bound on codec tokens for one chunk.
+
+    The codec runs at 12 tokens per second. Even slow narration covers more
+    than 3 characters per second (Korean or English), so 4 tokens per
+    character is a generous ceiling. Without it a rare hallucination loop
+    runs to the library default of 2048 tokens (~170 s of babble), which on
+    CPU means many minutes wasted on one sentence.
+    """
+    return int(min(2048, max(160, n_chars * 4 + 48)))
+
+
 def read_text(args) -> str:
     if args.text:
         return args.text
@@ -53,6 +65,8 @@ def main() -> None:
     ap.add_argument("--temperature", type=float, default=None)
     ap.add_argument("--top-p", type=float, default=None)
     ap.add_argument("--seed", type=int, default=None, help="fix the sampling seed for repeatable output")
+    ap.add_argument("--max-new-tokens", type=int, default=None,
+                    help="hard cap on codec tokens per chunk (12 per second of audio). Default: estimated from chunk length")
     ap.add_argument("--mp3", action="store_true", help="also export mp3 (needs ffmpeg)")
     ap.add_argument("--list-profiles", action="store_true")
     ap.add_argument("--dry-run", action="store_true", help="only print the chunk plan")
@@ -95,9 +109,14 @@ def main() -> None:
         batch = chunks[start:start + args.batch_size]
         texts = [c for c, _ in batch]
         log(f"chunk {start + 1}-{start + len(batch)}/{len(chunks)}: {texts[0][:40]}{'…' if len(texts[0]) > 40 else ''}")
+        cap = args.max_new_tokens or token_budget(max(len(t) for t in texts))
+        t_chunk = time.time()
         wavs, sr = model.generate_voice_clone(
-            text=texts, language=[language] * len(texts), voice_clone_prompt=prompt, **gen_kwargs,
+            text=texts, language=[language] * len(texts), voice_clone_prompt=prompt,
+            max_new_tokens=cap, **gen_kwargs,
         )
+        got = sum(len(w) for w in wavs) / sr
+        log(f"  -> {got:.1f}s audio in {time.time() - t_chunk:.0f}s")
         for wav, (_, para_break) in zip(wavs, batch):
             pieces.append((np.asarray(wav, dtype=np.float32), args.paragraph_gap if para_break else args.gap))
     # no trailing silence after the last piece

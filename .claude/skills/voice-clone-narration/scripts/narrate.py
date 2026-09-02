@@ -37,6 +37,17 @@ def token_budget(n_chars: int) -> int:
     return int(min(2048, max(160, n_chars * 4 + 48)))
 
 
+def plausible_seconds(n_chars: int) -> float:
+    """Longest audio a chunk of this size should reasonably produce.
+
+    Korean narration runs 4-6 characters per second, English 12-15, so
+    0.3 s per character plus 2 s of slack is well above any honest reading.
+    Output past that line means the model looped or babbled — the failure
+    mode of autoregressive TTS — and is worth a resample, not a save.
+    """
+    return n_chars * 0.3 + 2.0
+
+
 def read_text(args) -> str:
     if args.text:
         return args.text
@@ -67,6 +78,8 @@ def main() -> None:
     ap.add_argument("--temperature", type=float, default=None)
     ap.add_argument("--top-p", type=float, default=None)
     ap.add_argument("--seed", type=int, default=None, help="fix the sampling seed for repeatable output")
+    ap.add_argument("--max-retries", type=int, default=2,
+                    help="resample a chunk this many times when its audio is implausibly long (default 2)")
     ap.add_argument("--max-new-tokens", type=int, default=None,
                     help="hard cap on codec tokens per chunk (12 per second of audio). Default: estimated from chunk length")
     ap.add_argument("--mp3", action="store_true", help="also export mp3 (needs ffmpeg)")
@@ -112,17 +125,26 @@ def main() -> None:
         texts = [c for c, _ in batch]
         log(f"chunk {start + 1}-{start + len(batch)}/{len(chunks)}: {texts[0][:40]}{'…' if len(texts[0]) > 40 else ''}")
         cap = args.max_new_tokens or token_budget(max(len(t) for t in texts))
-        t_chunk = time.time()
-        wavs, sr = model.generate_voice_clone(
-            text=texts, language=[language] * len(texts), voice_clone_prompt=prompt,
-            max_new_tokens=cap, **gen_kwargs,
-        )
-        got = sum(len(w) for w in wavs) / sr
-        log(f"  -> {got:.1f}s audio in {time.time() - t_chunk:.0f}s")
-        for wav, (_, para_break) in zip(wavs, batch):
-            wav = np.asarray(wav, dtype=np.float32)
+        wavs = None
+        for attempt in range(args.max_retries + 1):
+            t_chunk = time.time()
+            wavs, sr = model.generate_voice_clone(
+                text=texts, language=[language] * len(texts), voice_clone_prompt=prompt,
+                max_new_tokens=cap, **gen_kwargs,
+            )
+            wavs = [np.asarray(w, dtype=np.float32) for w in wavs]
             if not args.no_trim:
-                wav = trim_edges(wav, sr)
+                wavs = [trim_edges(w, sr) for w in wavs]
+            got = sum(len(w) for w in wavs) / sr
+            log(f"  -> {got:.1f}s audio in {time.time() - t_chunk:.0f}s")
+            too_long = [t for w, t in zip(wavs, texts) if len(w) / sr > plausible_seconds(len(t))]
+            if not too_long:
+                break
+            if attempt < args.max_retries:
+                log(f"  ⚠ implausibly long for {len(too_long[0])} chars, resampling ({attempt + 1}/{args.max_retries})")
+            else:
+                log("  ⚠ still long after retries; keeping it. Try --seed, lower --max-chars, or simpler wording.")
+        for wav, (_, para_break) in zip(wavs, batch):
             pieces.append((wav, args.paragraph_gap if para_break else args.gap))
     # no trailing silence after the last piece
     if pieces:

@@ -152,6 +152,7 @@ it in, especially for markdown or code-heavy sources:
 | Right voice, wrong mood (stiff for a personal message, too chatty for a tutorial) | reference tone doesn't match the text; 0.6B also flattens prosody | record a second profile with a matching script (`ko_casual` vs `ko`), use `--model 1.7B`, `--temperature 0.7` |
 | Wrong language accent | `--language` left on the reference language | pass `--language` matching the *text* |
 | Skips or repeats words | chunk too long or hallucination on odd tokens | lower `--max-chars` to ~120, clean the text, try another `--seed` |
+| A chunk comes out far longer than its text (looping / babble) | autoregressive runaway | narrate.py resamples such chunks automatically (`--max-retries`, default 2); if it persists, shorten the chunk or reword it |
 | Slow | CPU inference or 1.7B on small GPU | `--model 0.6B`; on GPU raise `--batch-size`. On CPU keep it at 1: a batch runs until its slowest member stops |
 | Uneven pauses | trimming disabled or long chunks | default trimming handles it; otherwise tune `--gap` / `--paragraph-gap` |
 

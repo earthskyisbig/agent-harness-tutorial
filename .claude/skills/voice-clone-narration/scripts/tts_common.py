@@ -83,10 +83,23 @@ def load_audio(path: Path, target_sr: int = TARGET_SR) -> Tuple[np.ndarray, int]
     return wav.astype(np.float32), sr
 
 
+def find_ffmpeg() -> Optional[str]:
+    """ffmpeg from PATH, else the static binary bundled by the imageio-ffmpeg wheel."""
+    exe = shutil.which("ffmpeg")
+    if exe:
+        return exe
+    try:
+        import imageio_ffmpeg
+        return imageio_ffmpeg.get_ffmpeg_exe()
+    except Exception:
+        return None
+
+
 def _ffmpeg_decode(path: Path, sr: int) -> Tuple[np.ndarray, int]:
-    ffmpeg = shutil.which("ffmpeg")
+    ffmpeg = find_ffmpeg()
     if not ffmpeg:
-        die(f"cannot decode {path.suffix} without ffmpeg. Install ffmpeg or convert the file to wav first.")
+        die(f"cannot decode {path.suffix} without ffmpeg. `pip install imageio-ffmpeg` (no system install needed), "
+            "install ffmpeg, or convert the file to wav first.")
     cmd = [ffmpeg, "-v", "error", "-i", str(path), "-f", "f32le", "-ac", "1", "-ar", str(sr), "-"]
     raw = subprocess.run(cmd, check=True, capture_output=True).stdout
     return np.frombuffer(raw, dtype=np.float32).copy(), sr
@@ -102,9 +115,9 @@ def save_wav(path: Path, wav: np.ndarray, sr: int) -> Path:
 
 def maybe_encode_mp3(wav_path: Path) -> Optional[Path]:
     """Convert a wav to mp3 next to it with ffmpeg. Returns None when ffmpeg is missing."""
-    ffmpeg = shutil.which("ffmpeg")
+    ffmpeg = find_ffmpeg()
     if not ffmpeg:
-        log("ffmpeg not found; skipping mp3 export (wav is still written)")
+        log("ffmpeg not found; skipping mp3 export (wav is still written). `pip install imageio-ffmpeg` fixes this.")
         return None
     mp3 = wav_path.with_suffix(".mp3")
     subprocess.run([ffmpeg, "-v", "error", "-y", "-i", str(wav_path), "-codec:a", "libmp3lame",
@@ -157,7 +170,7 @@ def analyse_audio(wav: np.ndarray, sr: int) -> AudioReport:
     return AudioReport(dur, peak, rms_db, clipped, silence, warnings)
 
 
-def condition_reference(wav: np.ndarray, sr: int, max_seconds: float = 30.0) -> np.ndarray:
+def condition_reference(wav: np.ndarray, sr: int, max_seconds: float = 45.0) -> np.ndarray:
     """Trim edge silence, cap length and peak-normalise a reference recording.
 
     Qwen3-TTS uses the reference twice: as codec tokens for in-context
@@ -170,6 +183,8 @@ def condition_reference(wav: np.ndarray, sr: int, max_seconds: float = 30.0) -> 
     if len(trimmed) > sr * 0.5:
         wav = trimmed
     if len(wav) > int(sr * max_seconds):
+        log(f"⚠ reference is {len(wav)/sr:.0f}s, cutting to {max_seconds:.0f}s. If a transcript was given it no "
+            "longer matches the tail: pass a larger --max-seconds or shorten the transcript accordingly.")
         wav = wav[: int(sr * max_seconds)]
     peak = np.max(np.abs(wav)) if len(wav) else 0.0
     if peak > 0:

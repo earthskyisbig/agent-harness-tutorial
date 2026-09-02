@@ -70,7 +70,9 @@ def main() -> None:
     src.add_argument("--text", default=None, help="exact transcript as a string")
     src.add_argument("--text-file", default=None, help="file containing the transcript")
     src.add_argument("--transcribe", action="store_true", help="auto-transcribe with faster-whisper")
-    ap.add_argument("--max-seconds", type=float, default=30.0, help="cap reference length (default 30)")
+    ap.add_argument("--max-seconds", type=float, default=45.0,
+                    help="cap reference length (default 45; a 30 s script often runs 35-40 s, and cutting it "
+                         "would break the audio/transcript alignment)")
     ap.add_argument("--model", default=DEFAULT_MODEL_SIZE, help="0.6B | 1.7B for the verification sample")
     ap.add_argument("--device", default="auto")
     ap.add_argument("--no-test", action="store_true", help="skip synthesising a verification sample")

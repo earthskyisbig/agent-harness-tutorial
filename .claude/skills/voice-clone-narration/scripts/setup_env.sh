@@ -35,6 +35,7 @@ else
 fi
 
 pip install -q -U qwen-tts
+pip install -q imageio-ffmpeg   # bundled ffmpeg binary: decodes m4a/mp3 uploads, exports mp3, no system install
 pip install -q sounddevice || echo "[setup] sounddevice failed (PortAudio missing?) - recording will fall back to ffmpeg/arecord/sox"
 
 # optional extras: uncomment if you want free-text references auto-transcribed

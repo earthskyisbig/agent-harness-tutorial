@@ -122,7 +122,9 @@ reference, e.g. Korean reference reading English text), `--model 0.6B|1.7B`
 (pauses in seconds; the model's own padding silence is trimmed so these
 are exact), `--max-chars` (chunk size), `--seed` (reproducible output),
 `--batch-size` (leave at 1 on CPU, raise to 4-8 on a GPU), `--dry-run`
-(show the chunk plan without loading the model), `--list-profiles`.
+(show the chunk plan without loading the model), `--candidates N` (best-of-N
+per chunk; use 2-3 for anything the user will actually publish),
+`--list-profiles`.
 
 Output defaults to `~/.voice-clone/outputs/<profile>-<timestamp>.wav`.
 Tell the user the path when done.
@@ -152,7 +154,7 @@ it in, especially for markdown or code-heavy sources:
 | Right voice, wrong mood (stiff for a personal message, too chatty for a tutorial) | reference tone doesn't match the text; 0.6B also flattens prosody | record a second profile with a matching script (`ko_casual` vs `ko`), use `--model 1.7B`, `--temperature 0.7` |
 | Wrong language accent | `--language` left on the reference language | pass `--language` matching the *text* |
 | Skips or repeats words | chunk too long or hallucination on odd tokens | lower `--max-chars` to ~120, clean the text, try another `--seed` |
-| A chunk comes out far longer than its text (looping / babble) | autoregressive runaway | narrate.py resamples such chunks automatically (`--max-retries`, default 2); if it persists, shorten the chunk or reword it |
+| A chunk is garbled / babbled, often the first one | autoregressive sampling went off the rails | `--candidates 3`: each chunk is sampled 3× and the take closest to the speaker's own pace (measured from the reference) is kept. Runaway takes are resampled automatically (`--max-retries`). If it persists, shorten the chunk or reword it |
 | Slow | CPU inference or 1.7B on small GPU | `--model 0.6B`; on GPU raise `--batch-size`. On CPU keep it at 1: a batch runs until its slowest member stops |
 | Uneven pauses | trimming disabled or long chunks | default trimming handles it; otherwise tune `--gap` / `--paragraph-gap` |
 

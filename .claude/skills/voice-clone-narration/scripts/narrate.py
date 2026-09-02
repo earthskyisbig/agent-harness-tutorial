@@ -37,15 +37,22 @@ def token_budget(n_chars: int) -> int:
     return int(min(2048, max(160, n_chars * 4 + 48)))
 
 
-def plausible_seconds(n_chars: int) -> float:
-    """Longest audio a chunk of this size should reasonably produce.
+def expected_seconds(n_chars: int, sec_per_char: float) -> float:
+    """How long a chunk should take at the speaker's own pace.
 
-    Korean narration runs 4-6 characters per second, English 12-15, so
-    0.3 s per character plus 2 s of slack is well above any honest reading.
-    Output past that line means the model looped or babbled — the failure
-    mode of autoregressive TTS — and is worth a resample, not a save.
+    The profile's reference gives the real speaking rate (its transcript
+    length over its duration), which is far more precise than a per-language
+    guess. Half a second covers the breath at the start of a phrase.
     """
-    return n_chars * 0.3 + 2.0
+    return n_chars * sec_per_char + 0.5
+
+
+def profile_sec_per_char(prof) -> float:
+    n = len(prof.ref_text.strip())
+    dur = float(prof.meta.get("duration_s") or 0)
+    if n and dur:
+        return dur / n
+    return 0.2  # Korean-ish fallback when the profile has no transcript
 
 
 def read_text(args) -> str:
@@ -78,8 +85,11 @@ def main() -> None:
     ap.add_argument("--temperature", type=float, default=None)
     ap.add_argument("--top-p", type=float, default=None)
     ap.add_argument("--seed", type=int, default=None, help="fix the sampling seed for repeatable output")
+    ap.add_argument("--candidates", type=int, default=1,
+                    help="samples generated per chunk; the one whose length best matches the speaker's pace is kept "
+                         "(default 1; 2-3 noticeably reduces babbled chunks at proportional cost)")
     ap.add_argument("--max-retries", type=int, default=2,
-                    help="resample a chunk this many times when its audio is implausibly long (default 2)")
+                    help="extra resamples when every candidate is implausibly long (default 2)")
     ap.add_argument("--max-new-tokens", type=int, default=None,
                     help="hard cap on codec tokens per chunk (12 per second of audio). Default: estimated from chunk length")
     ap.add_argument("--mp3", action="store_true", help="also export mp3 (needs ffmpeg)")
@@ -117,6 +127,8 @@ def main() -> None:
     )
 
     gen_kwargs = {k: v for k, v in {"temperature": args.temperature, "top_p": args.top_p}.items() if v is not None}
+    spc = profile_sec_per_char(prof)
+    log(f"speaker pace from reference: {spc:.3f} s/char")
     pieces = []
     sr = None
     t0 = time.time()
@@ -125,8 +137,9 @@ def main() -> None:
         texts = [c for c, _ in batch]
         log(f"chunk {start + 1}-{start + len(batch)}/{len(chunks)}: {texts[0][:40]}{'…' if len(texts[0]) > 40 else ''}")
         cap = args.max_new_tokens or token_budget(max(len(t) for t in texts))
-        wavs = None
-        for attempt in range(args.max_retries + 1):
+        expected = [expected_seconds(len(t), spc) for t in texts]
+        best = None  # list of (score, wav) per text
+        for attempt in range(args.candidates + args.max_retries):
             t_chunk = time.time()
             wavs, sr = model.generate_voice_clone(
                 text=texts, language=[language] * len(texts), voice_clone_prompt=prompt,
@@ -135,16 +148,20 @@ def main() -> None:
             wavs = [np.asarray(w, dtype=np.float32) for w in wavs]
             if not args.no_trim:
                 wavs = [trim_edges(w, sr) for w in wavs]
-            got = sum(len(w) for w in wavs) / sr
-            log(f"  -> {got:.1f}s audio in {time.time() - t_chunk:.0f}s")
-            too_long = [t for w, t in zip(wavs, texts) if len(w) / sr > plausible_seconds(len(t))]
-            if not too_long:
-                break
-            if attempt < args.max_retries:
-                log(f"  ⚠ implausibly long for {len(too_long[0])} chars, resampling ({attempt + 1}/{args.max_retries})")
+            durs = [len(w) / sr for w in wavs]
+            # distance from the expected length, in units of expected length; >0.6 over is a babble tell
+            scores = [abs(d - e) / e for d, e in zip(durs, expected)]
+            log(f"  -> {sum(durs):.1f}s audio in {time.time() - t_chunk:.0f}s (expected ~{sum(expected):.1f}s)")
+            if best is None:
+                best = list(zip(scores, wavs))
             else:
-                log("  ⚠ still long after retries; keeping it. Try --seed, lower --max-chars, or simpler wording.")
-        for wav, (_, para_break) in zip(wavs, batch):
+                best = [min(a, b, key=lambda x: x[0]) for a, b in zip(best, zip(scores, wavs))]
+            runaway = any(d > e * 1.6 + 1.0 for d, e in zip(durs, expected))
+            if attempt + 1 >= args.candidates and not (runaway and attempt + 1 < args.candidates + args.max_retries):
+                break
+            if runaway:
+                log("  ⚠ implausibly long, resampling")
+        for (_, wav), (_, para_break) in zip(best, batch):
             pieces.append((wav, args.paragraph_gap if para_break else args.gap))
     # no trailing silence after the last piece
     if pieces:

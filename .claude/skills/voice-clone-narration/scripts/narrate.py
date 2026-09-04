@@ -1,0 +1,182 @@
+#!/usr/bin/env python3
+"""Narrate text in a cloned voice.
+
+    narrate.py --profile me --text "안녕하세요" --out hello.wav
+    narrate.py --profile me --file script.md --out ep1.wav --mp3
+    echo "..." | narrate.py --profile me
+
+Long text is split into sentence-sized chunks, each synthesised with the
+same voice-clone prompt (built once, reused), then stitched with short
+pauses; paragraph breaks get a slightly longer pause.
+"""
+from __future__ import annotations
+
+import argparse
+import sys
+import time
+from pathlib import Path
+
+import numpy as np
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from tts_common import (  # noqa: E402
+    DEFAULT_MODEL_SIZE, OUTPUT_DIR, die, join_with_gaps, list_profiles, load_model, load_profile, log,
+    maybe_encode_mp3, normalise_language, save_wav, split_into_chunks, trim_edges,
+)
+
+
+def token_budget(n_chars: int) -> int:
+    """Upper bound on codec tokens for one chunk.
+
+    The codec runs at 12 tokens per second. Even slow narration covers more
+    than 3 characters per second (Korean or English), so 4 tokens per
+    character is a generous ceiling. Without it a rare hallucination loop
+    runs to the library default of 2048 tokens (~170 s of babble), which on
+    CPU means many minutes wasted on one sentence.
+    """
+    return int(min(2048, max(160, n_chars * 4 + 48)))
+
+
+def expected_seconds(n_chars: int, sec_per_char: float) -> float:
+    """How long a chunk should take at the speaker's own pace.
+
+    The profile's reference gives the real speaking rate (its transcript
+    length over its duration), which is far more precise than a per-language
+    guess. Half a second covers the breath at the start of a phrase.
+    """
+    return n_chars * sec_per_char + 0.5
+
+
+def profile_sec_per_char(prof) -> float:
+    n = len(prof.ref_text.strip())
+    dur = float(prof.meta.get("duration_s") or 0)
+    if n and dur:
+        return dur / n
+    return 0.2  # Korean-ish fallback when the profile has no transcript
+
+
+def read_text(args) -> str:
+    if args.text:
+        return args.text
+    if args.file:
+        return Path(args.file).read_text(encoding="utf-8")
+    if not sys.stdin.isatty():
+        return sys.stdin.read()
+    die("give text with --text, --file, or via stdin")
+
+
+def main() -> None:
+    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--profile", default="me", help="voice profile name (default: me)")
+    ap.add_argument("--text", help="text to narrate")
+    ap.add_argument("--file", help="text/markdown file to narrate")
+    ap.add_argument("--out", type=Path, default=None, help="output wav (default: ~/.voice-clone/outputs/<timestamp>.wav)")
+    ap.add_argument("--language", default=None, help="korean/english/... (default: profile language, or auto)")
+    ap.add_argument("--model", default=DEFAULT_MODEL_SIZE, help="0.6B | 1.7B (default 1.7B)")
+    ap.add_argument("--model-id", default=None, help="explicit HF repo id or local path of a Base model")
+    ap.add_argument("--device", default="auto", help="auto | cuda:0 | mps | cpu")
+    ap.add_argument("--dtype", default="auto", help="auto | bfloat16 | float16 | float32")
+    ap.add_argument("--max-chars", type=int, default=180, help="max characters per synthesis chunk")
+    ap.add_argument("--gap", type=float, default=0.35, help="pause between sentences (s)")
+    ap.add_argument("--paragraph-gap", type=float, default=0.8, help="pause between paragraphs (s)")
+    ap.add_argument("--batch-size", type=int, default=1,
+                    help="chunks per model call. Keep 1 on CPU (a batch waits for its slowest member); 4-8 on a GPU")
+    ap.add_argument("--no-trim", action="store_true", help="keep the silence the model pads around each chunk")
+    ap.add_argument("--temperature", type=float, default=None)
+    ap.add_argument("--top-p", type=float, default=None)
+    ap.add_argument("--seed", type=int, default=None, help="fix the sampling seed for repeatable output")
+    ap.add_argument("--candidates", type=int, default=1,
+                    help="samples generated per chunk; the one whose length best matches the speaker's pace is kept "
+                         "(default 1; 2-3 noticeably reduces babbled chunks at proportional cost)")
+    ap.add_argument("--max-retries", type=int, default=2,
+                    help="extra resamples when every candidate is implausibly long (default 2)")
+    ap.add_argument("--max-new-tokens", type=int, default=None,
+                    help="hard cap on codec tokens per chunk (12 per second of audio). Default: estimated from chunk length")
+    ap.add_argument("--mp3", action="store_true", help="also export mp3 (needs ffmpeg)")
+    ap.add_argument("--list-profiles", action="store_true")
+    ap.add_argument("--dry-run", action="store_true", help="only print the chunk plan")
+    args = ap.parse_args()
+
+    if args.list_profiles:
+        print("\n".join(list_profiles()) or "(no profiles)")
+        return
+
+    text = read_text(args).strip()
+    if not text:
+        die("empty text")
+    chunks = split_into_chunks(text, max_chars=args.max_chars)
+    log(f"{len(text)} chars -> {len(chunks)} chunk(s)")
+    if args.dry_run:
+        for i, (c, para) in enumerate(chunks, 1):
+            print(f"[{i:03d}]{' ¶' if para else '  '} {c}")
+        return
+
+    prof = load_profile(args.profile)
+    language = normalise_language(args.language or prof.language or "auto")
+    out = args.out or (OUTPUT_DIR / f"{prof.name}-{time.strftime('%Y%m%d-%H%M%S')}.wav")
+
+    if args.seed is not None:
+        import torch
+        torch.manual_seed(args.seed)
+        np.random.seed(args.seed)
+
+    model = load_model(args.model, args.device, args.dtype, model_id=args.model_id)
+    log(f"building voice prompt from {prof.ref_wav} ({'x-vector only' if prof.x_vector_only else 'in-context'})")
+    prompt = model.create_voice_clone_prompt(
+        ref_audio=str(prof.ref_wav), ref_text=prof.ref_text or None, x_vector_only_mode=prof.x_vector_only,
+    )
+
+    gen_kwargs = {k: v for k, v in {"temperature": args.temperature, "top_p": args.top_p}.items() if v is not None}
+    spc = profile_sec_per_char(prof)
+    log(f"speaker pace from reference: {spc:.3f} s/char")
+    pieces = []
+    sr = None
+    t0 = time.time()
+    for start in range(0, len(chunks), args.batch_size):
+        batch = chunks[start:start + args.batch_size]
+        texts = [c for c, _ in batch]
+        log(f"chunk {start + 1}-{start + len(batch)}/{len(chunks)}: {texts[0][:40]}{'…' if len(texts[0]) > 40 else ''}")
+        cap = args.max_new_tokens or token_budget(max(len(t) for t in texts))
+        expected = [expected_seconds(len(t), spc) for t in texts]
+        best = None  # list of (score, wav) per text
+        for attempt in range(args.candidates + args.max_retries):
+            t_chunk = time.time()
+            wavs, sr = model.generate_voice_clone(
+                text=texts, language=[language] * len(texts), voice_clone_prompt=prompt,
+                max_new_tokens=cap, **gen_kwargs,
+            )
+            wavs = [np.asarray(w, dtype=np.float32) for w in wavs]
+            if not args.no_trim:
+                wavs = [trim_edges(w, sr) for w in wavs]
+            durs = [len(w) / sr for w in wavs]
+            # distance from the expected length, in units of expected length; >0.6 over is a babble tell
+            scores = [abs(d - e) / e for d, e in zip(durs, expected)]
+            log(f"  -> {sum(durs):.1f}s audio in {time.time() - t_chunk:.0f}s (expected ~{sum(expected):.1f}s)")
+            if best is None:
+                best = list(zip(scores, wavs))
+            else:
+                best = [min(a, b, key=lambda x: x[0]) for a, b in zip(best, zip(scores, wavs))]
+            runaway = any(d > e * 1.6 + 1.0 for d, e in zip(durs, expected))
+            if attempt + 1 >= args.candidates and not (runaway and attempt + 1 < args.candidates + args.max_retries):
+                break
+            if runaway:
+                log("  ⚠ implausibly long, resampling")
+        for (_, wav), (_, para_break) in zip(best, batch):
+            pieces.append((wav, args.paragraph_gap if para_break else args.gap))
+    # no trailing silence after the last piece
+    if pieces:
+        pieces[-1] = (pieces[-1][0], 0.0)
+
+    audio = join_with_gaps(pieces, sr)
+    save_wav(out, audio, sr)
+    dur = len(audio) / sr
+    log(f"done: {dur:.1f}s of audio in {time.time() - t0:.1f}s")
+    print(f"✓ {out}  ({dur:.1f}s)")
+    if args.mp3:
+        mp3 = maybe_encode_mp3(out)
+        if mp3:
+            print(f"✓ {mp3}")
+
+
+if __name__ == "__main__":
+    main()

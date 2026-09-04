@@ -10,6 +10,14 @@ Claude Code · Codex · Gemini 3-CLI 팀 협업 실습 모음.
 |---|---|---|
 | [ep_a_demo](./ep_a_demo/) | [EP A — dev variant](https://youtu.be/ly5CUJwelFc) | FastAPI 코드를 3-CLI 팀으로 리뷰 |
 
+## 스킬
+
+| 스킬 | 설명 |
+|---|---|
+| [voice-clone-narration](./.claude/skills/voice-clone-narration/) | 내 목소리 30초 녹음 → Qwen3-TTS 로 복제 → 텍스트를 내 목소리로 나레이션 (wav/mp3) |
+
+Claude Code 에서 이 저장소를 열면 `.claude/skills/` 아래 스킬이 자동 인식됩니다.
+
 ## 사전 준비
 
 Claude Code · Codex CLI · Gemini CLI 3개 설치 및 인증 필요.
